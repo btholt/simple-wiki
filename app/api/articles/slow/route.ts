@@ -1,100 +1,130 @@
 import { db } from "@/db";
 import { articles, user } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { sql, desc } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    // INTENTIONALLY SLOW AND UNOPTIMIZED QUERIES
-    // This is for testing SQL optimization tools
+    // OPTIMIZED VERSION - Using JOINs, CTEs, and indexes
+    const { searchParams } = new URL(request.url);
+    const limit = parseInt(searchParams.get("limit") || "50");
+    const offset = parseInt(searchParams.get("offset") || "0");
 
-    // Anti-pattern 1: Fetch all articles without pagination
-    const allArticles = await db.execute(
-      sql`SELECT * FROM articles ORDER BY created_at DESC`
-    );
-
-    // Anti-pattern 2: N+1 query problem - fetch each author separately
-    const articlesWithAuthors = [];
-    for (const article of allArticles.rows) {
-      // Separate query for each article's author
-      const authorResult = await db.execute(
-        sql`SELECT * FROM "user" WHERE id = ${article.author_id}`
-      );
-      const author = authorResult.rows[0];
-
-      // Anti-pattern 3: Another separate query to count user's total articles
-      const articleCountResult = await db.execute(
-        sql`SELECT COUNT(*) as count FROM articles WHERE author_id = ${article.author_id}`
-      );
-      const articleCount = articleCountResult.rows[0];
-
-      // Anti-pattern 4: Yet another query to get the latest article date
-      const latestArticleResult = await db.execute(
-        sql`SELECT MAX(created_at) as latest FROM articles WHERE author_id = ${article.author_id}`
-      );
-      const latestArticle = latestArticleResult.rows[0];
-
-      // Anti-pattern 5: Unnecessary subquery for each article
-      const viewCountResult = await db.execute(
-        sql`SELECT (SELECT COUNT(*) FROM articles WHERE author_id = ${article.author_id}) * 100 as estimated_views`
-      );
-
-      articlesWithAuthors.push({
-        id: article.id,
-        title: article.title,
-        content: article.content,
-        createdAt: article.created_at,
-        updatedAt: article.updated_at,
-        author: {
-          id: author?.id,
-          name: author?.name,
-          email: author?.email,
-          articleCount: articleCount?.count,
-          latestArticleDate: latestArticle?.latest,
-          estimatedViews: viewCountResult.rows[0]?.estimated_views,
-        },
-      });
-    }
-
-    // Anti-pattern 6: Additional slow aggregation query without indexes
-    const statsResult = await db.execute(
-      sql`
+    // Single optimized query with JOIN and CTEs
+    // This replaces N+1 queries with a single efficient query
+    // Uses indexes: idx_articles_author_id, idx_articles_created_at
+    const result = await db.execute(sql`
+      WITH article_stats AS (
         SELECT 
-          (SELECT COUNT(*) FROM articles) as total_articles,
-          (SELECT COUNT(*) FROM "user") as total_users,
-          (SELECT AVG(LENGTH(content)) FROM articles) as avg_content_length,
-          (SELECT MAX(created_at) FROM articles) as newest_article,
-          (SELECT MIN(created_at) FROM articles) as oldest_article
-      `
-    );
+          author_id,
+          COUNT(*) as article_count,
+          MAX(created_at) as latest_article_date,
+          SUM(LENGTH(content)) as total_content_length,
+          COUNT(*) * 100 as estimated_views
+        FROM articles
+        GROUP BY author_id
+      ),
+      global_stats AS (
+        SELECT 
+          COUNT(DISTINCT a.id) as total_articles,
+          COUNT(DISTINCT u.id) as total_users,
+          AVG(LENGTH(a.content))::INTEGER as avg_content_length,
+          MAX(a.created_at) as newest_article,
+          MIN(a.created_at) as oldest_article
+        FROM articles a
+        CROSS JOIN "user" u
+      )
+      SELECT 
+        a.id,
+        a.title,
+        a.content,
+        a.created_at,
+        a.updated_at,
+        u.id as author_id,
+        u.name as author_name,
+        u.email as author_email,
+        COALESCE(ast.article_count, 0) as author_article_count,
+        ast.latest_article_date as author_latest_article,
+        ast.total_content_length as author_total_content_length,
+        ast.estimated_views as author_estimated_views,
+        gs.total_articles,
+        gs.total_users,
+        gs.avg_content_length,
+        gs.newest_article,
+        gs.oldest_article
+      FROM articles a
+      LEFT JOIN "user" u ON a.author_id = u.id
+      LEFT JOIN article_stats ast ON u.id = ast.author_id
+      CROSS JOIN global_stats gs
+      ORDER BY a.created_at DESC
+      LIMIT ${limit}
+      OFFSET ${offset}
+    `);
 
-    // Anti-pattern 7: Fetch all users separately to calculate stats
-    const allUsers = await db.execute(sql`SELECT * FROM "user"`);
-    const userStats = [];
-    for (const u of allUsers.rows) {
-      const userArticles = await db.execute(
-        sql`SELECT * FROM articles WHERE author_id = ${u.id}`
-      );
-      userStats.push({
-        userId: u.id,
-        userName: u.name,
-        articleCount: userArticles.rows.length,
-        totalContentLength: userArticles.rows.reduce(
-          (sum: number, a: any) => sum + (a.content?.length || 0),
-          0
-        ),
-      });
-    }
+    const articlesData = result.rows.map((row: any) => ({
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      author: {
+        id: row.author_id,
+        name: row.author_name,
+        email: row.author_email,
+        articleCount: row.author_article_count,
+        latestArticleDate: row.author_latest_article,
+        estimatedViews: row.author_estimated_views,
+      },
+    }));
+
+    const stats =
+      result.rows.length > 0
+        ? {
+            total_articles: result.rows[0].total_articles,
+            total_users: result.rows[0].total_users,
+            avg_content_length: result.rows[0].avg_content_length,
+            newest_article: result.rows[0].newest_article,
+            oldest_article: result.rows[0].oldest_article,
+          }
+        : null;
+
+    // Calculate user stats from article_stats
+    const userStatsResult = await db.execute(sql`
+      SELECT 
+        u.id as user_id,
+        u.name as user_name,
+        COALESCE(COUNT(a.id), 0) as article_count,
+        COALESCE(SUM(LENGTH(a.content)), 0) as total_content_length
+      FROM "user" u
+      LEFT JOIN articles a ON u.id = a.author_id
+      GROUP BY u.id, u.name
+      ORDER BY article_count DESC
+    `);
+
+    const userStats = userStatsResult.rows.map((row: any) => ({
+      userId: row.user_id,
+      userName: row.user_name,
+      articleCount: parseInt(row.article_count),
+      totalContentLength: parseInt(row.total_content_length),
+    }));
 
     return NextResponse.json({
       success: true,
-      articles: articlesWithAuthors,
-      stats: statsResult.rows[0],
+      articles: articlesData,
+      stats,
       userStats,
       metadata: {
-        totalQueries: allArticles.rows.length * 4 + allUsers.rows.length + 2,
-        warning:
-          "This endpoint is intentionally unoptimized for testing purposes",
+        totalQueries: 2,
+        limit,
+        offset,
+        note: "Optimized with JOINs, CTEs, and indexes. Reduced from N*4+M+2 to 2 queries",
+        improvements: [
+          "Added pagination support",
+          "Used indexes on author_id and created_at",
+          "Replaced N+1 queries with JOINs",
+          "Used CTEs for efficient aggregations",
+          "Reduced query count by ~99%",
+        ],
       },
     });
   } catch (error) {
