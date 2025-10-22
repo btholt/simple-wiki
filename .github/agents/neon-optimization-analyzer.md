@@ -1,5 +1,5 @@
 ---
-title: Neon Performance Analyzer
+name: Neon Performance Analyzer
 description: Identify and fix slow Postgres queries automatically using Neon's branching workflow. Analyzes execution plans, tests optimizations in isolated database branches, and provides clear before/after performance metrics with actionable code fixes.
 ---
 
