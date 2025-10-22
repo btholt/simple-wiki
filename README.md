@@ -6,6 +6,7 @@ A simple multi-user wiki application built with Next.js, BetterAuth, Drizzle ORM
 
 - **Multi-user support**: Users can sign up and sign in with email/password
 - **Article management**: Create, edit, and view articles with markdown support
+- **Tagging system**: Organize articles with tags (many-to-many relationship)
 - **Access control**: Users can only edit their own articles
 - **Public viewing**: Anyone can browse and read articles without logging in
 
@@ -60,7 +61,6 @@ openssl rand -base64 32
 4. Run database migrations:
 
 ```bash
-npm run db:generate
 npm run db:migrate
 ```
 
@@ -69,6 +69,8 @@ Or push the schema directly (for development):
 ```bash
 npm run db:push
 ```
+
+**Note**: A new tagging system migration was added. See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) for details on the tagging system and migration.
 
 ### Running the Application
 
@@ -114,7 +116,7 @@ wiki/
 │   ├── auth-button.tsx   # Auth button component
 │   └── markdown-renderer.tsx
 ├── db/
-│   ├── schema.ts         # Database schema
+│   ├── schema.ts         # Database schema (includes tags & article_tags)
 │   └── index.ts          # Database client
 ├── lib/
 │   ├── auth.ts           # Auth server config
