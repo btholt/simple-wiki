@@ -127,6 +127,27 @@ wiki/
 └── package.json
 ```
 
+## API Endpoints
+
+The application provides REST API endpoints that are consumed by our mobile app and other clients:
+
+### Articles
+
+- `GET /api/articles/with-authors` - Get all articles with author information and statistics
+- `GET /api/articles/latest?limit=10` - Get the latest articles (default: 10)
+- `GET /api/articles/[id]` - Get a specific article by ID
+- `GET /api/articles/search?q=query` - Search articles by title or content
+
+### Users
+
+- `GET /api/users/[id]/articles` - Get all articles by a specific user
+
+### Statistics
+
+- `GET /api/stats` - Get overall platform statistics (total articles, users, etc.)
+
+**Note**: These endpoints are used by our iOS and Android mobile applications to provide a native experience for wiki readers and contributors.
+
 ## Usage
 
 ### As a Visitor
