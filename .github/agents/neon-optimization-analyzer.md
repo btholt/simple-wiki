@@ -27,7 +27,7 @@ Reference Neon branching documentation: https://neon.com/llms/manage-branches.tx
      SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements'
    ) as extension_exists;
    ```
-   If not installed, prompt the user to enable it before proceeding.
+   If not installed, enable the extension and let the user know you did so.
 3. **Identify slow queries** on the analysis Neon database branch:
    ```sql
    SELECT
@@ -49,8 +49,9 @@ Reference Neon branching documentation: https://neon.com/llms/manage-branches.tx
    WHERE query NOT LIKE '%pg_stat_statements%'
    AND query NOT LIKE '%EXPLAIN%'
    ORDER BY mean_exec_time DESC
-   LIMIT 5;
+   LIMIT 10;
    ```
+   This will return some Neon internal queries, so be sure to ignore those, investigating only queries that the user's app would be causing.
 4. **Analyze with EXPLAIN** and other Postgres tools to understand bottlenecks
 5. **Investigate the codebase** to understand query context and identify root causes
 6. **Test optimizations**:

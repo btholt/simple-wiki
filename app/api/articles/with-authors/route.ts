@@ -1,58 +1,56 @@
 import { db } from "@/db";
-import { articles, user } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { sql } from "drizzle-orm";
 
 export async function GET() {
   try {
-    // Get all articles
-    const allArticles = await db.execute(
-      sql`SELECT * FROM articles ORDER BY created_at DESC`
-    );
+    // Get all articles with author info
+    const result = await db.execute(sql`
+      SELECT 
+        a.id,
+        a.title,
+        a.content,
+        a.created_at,
+        a.updated_at,
+        a.author_id,
+        (SELECT name FROM "user" WHERE id = a.author_id) as author_name,
+        (SELECT email FROM "user" WHERE id = a.author_id) as author_email,
+        (SELECT COUNT(*) FROM articles WHERE author_id = a.author_id) as author_article_count,
+        (SELECT COUNT(*) FROM articles) as total_articles,
+        (SELECT COUNT(*) FROM "user") as total_users,
+        LENGTH(a.content) as content_length,
+        UPPER(a.title) as title_upper,
+        LOWER(a.title) as title_lower
+      FROM articles a
+      ORDER BY a.created_at DESC
+    `);
 
-    // Build response with author info
-    const articlesWithAuthors = [];
-    for (const article of allArticles.rows) {
-      // Get the author for this article
-      const authorResult = await db.execute(
-        sql`SELECT * FROM "user" WHERE id = ${article.author_id}`
-      );
-      const author = authorResult.rows[0];
+    const articles = result.rows.map((row: any) => ({
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      contentLength: row.content_length,
+      author: {
+        id: row.author_id,
+        name: row.author_name,
+        email: row.author_email,
+        totalArticles: row.author_article_count,
+      },
+    }));
 
-      // Get author's article count
-      const countResult = await db.execute(
-        sql`SELECT COUNT(*) as count FROM articles WHERE author_id = ${article.author_id}`
-      );
-
-      articlesWithAuthors.push({
-        id: article.id,
-        title: article.title,
-        content: article.content,
-        createdAt: article.created_at,
-        updatedAt: article.updated_at,
-        author: {
-          id: author?.id,
-          name: author?.name,
-          email: author?.email,
-          totalArticles: countResult.rows[0]?.count || 0,
-        },
-      });
-    }
-
-    // Get some overall stats
-    const totalArticlesResult = await db.execute(
-      sql`SELECT COUNT(*) as count FROM articles`
-    );
-    const totalUsersResult = await db.execute(
-      sql`SELECT COUNT(*) as count FROM "user"`
-    );
+    const stats =
+      result.rows.length > 0
+        ? {
+            totalArticles: result.rows[0].total_articles,
+            totalUsers: result.rows[0].total_users,
+          }
+        : { totalArticles: 0, totalUsers: 0 };
 
     return NextResponse.json({
-      articles: articlesWithAuthors,
-      stats: {
-        totalArticles: totalArticlesResult.rows[0]?.count || 0,
-        totalUsers: totalUsersResult.rows[0]?.count || 0,
-      },
+      articles,
+      stats,
     });
   } catch (error) {
     console.error("Error fetching articles:", error);
@@ -62,4 +60,3 @@ export async function GET() {
     );
   }
 }
-
