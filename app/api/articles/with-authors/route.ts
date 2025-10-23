@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm";
 
 export async function GET() {
   try {
-    // Get all articles with author info
+    // Get all articles with author info using efficient JOINs instead of correlated subqueries
     const result = await db.execute(sql`
       SELECT 
         a.id,
@@ -13,16 +13,28 @@ export async function GET() {
         a.created_at,
         a.updated_at,
         a.author_id,
-        (SELECT name FROM "user" WHERE id = a.author_id) as author_name,
-        (SELECT email FROM "user" WHERE id = a.author_id) as author_email,
-        (SELECT COUNT(*) FROM articles WHERE author_id = a.author_id) as author_article_count,
-        (SELECT COUNT(*) FROM articles) as total_articles,
-        (SELECT COUNT(*) FROM "user") as total_users,
-        LENGTH(a.content) as content_length,
-        UPPER(a.title) as title_upper,
-        LOWER(a.title) as title_lower
+        u.name as author_name,
+        u.email as author_email,
+        author_stats.article_count as author_article_count,
+        LENGTH(a.content) as content_length
       FROM articles a
+      LEFT JOIN "user" u ON a.author_id = u.id
+      LEFT JOIN (
+        SELECT author_id, COUNT(*) as article_count
+        FROM articles
+        GROUP BY author_id
+      ) author_stats ON a.author_id = author_stats.author_id
       ORDER BY a.created_at DESC
+    `);
+
+    // Get global stats in a single separate query
+    const statsResult = await db.execute(sql`
+      SELECT 
+        COUNT(DISTINCT a.id) as total_articles,
+        COUNT(DISTINCT u.id) as total_users
+      FROM articles a
+      CROSS JOIN "user" u
+      LIMIT 1
     `);
 
     const articles = result.rows.map((row: any) => ({
@@ -40,17 +52,14 @@ export async function GET() {
       },
     }));
 
-    const stats =
-      result.rows.length > 0
-        ? {
-            totalArticles: result.rows[0].total_articles,
-            totalUsers: result.rows[0].total_users,
-          }
-        : { totalArticles: 0, totalUsers: 0 };
+    const stats = statsResult.rows[0] || { total_articles: 0, total_users: 0 };
 
     return NextResponse.json({
       articles,
-      stats,
+      stats: {
+        totalArticles: stats.total_articles,
+        totalUsers: stats.total_users,
+      },
     });
   } catch (error) {
     console.error("Error fetching articles:", error);
